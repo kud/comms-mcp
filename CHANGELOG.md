@@ -1,3 +1,9 @@
+## [11.0.5](https://github.com/todoist/comms-mcp/compare/v11.0.4...v11.0.5) (2026-11-17)
+
+### Bug Fixes
+
+* handle a user status that has only an emoji ([#96](https://github.com/todoist/comms-mcp/issues/96)) ([8179f43](https://github.com/todoist/comms-mcp/commit/8179f434e906768e2ef634dbecf780e7fe1c6b56))
+
 ## [11.0.4](https://github.com/todoist/comms-mcp/compare/v11.0.3...v11.0.4) (2026-11-13)
 
 ### Bug Fixes
