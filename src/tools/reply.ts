@@ -45,7 +45,7 @@ const ArgsSchema = {
         .enum(THREAD_ACTIONS)
         .optional()
         .describe(
-            "Optional change to the thread's state, made together with this reply (thread replies only). 'close' marks the thread closed for everyone, so it accepts no new comments until reopened; 'reopen' reopens a closed thread. This is not mark-done, which only archives the thread in your own inbox.",
+            "Thread replies only. 'close' closes the thread for everyone with this reply; it then accepts no new comments until reopened. 'reopen' reopens it. Unlike mark-done, which only archives the thread in your own inbox.",
         ),
 }
 

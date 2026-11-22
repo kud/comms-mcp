@@ -94,6 +94,7 @@ export const LoadThreadOutputSchema = z.object({
         commentCount: z.number(),
         isArchived: z.boolean(),
         inInbox: z.boolean(),
+        isClosed: z.boolean(),
         participants: z.array(z.number()).optional(),
         participantNames: z.array(z.string()).optional(),
         threadUrl: z.string(),
@@ -158,6 +159,7 @@ export const FetchInboxOutputSchema = z.object({
             creator: z.number(),
             isUnread: z.boolean(),
             isArchived: z.boolean(),
+            isClosed: z.boolean(),
             isStarred: z.boolean(),
             threadUrl: z.string(),
         }),
@@ -211,6 +213,7 @@ export const SearchResultItemSchema = z.discriminatedUnion('type', [
             .describe('The matched comment id, set when the match is a comment in the thread.'),
         channelId: z.string().optional(),
         channelName: z.string().optional(),
+        isClosed: z.boolean().optional(),
     }),
     z.object({
         ...searchResultItemBaseShape,
