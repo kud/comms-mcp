@@ -8,6 +8,7 @@ import {
     NOTIFY_AUDIENCES,
     SearchResultSchema,
     ThreadSchema,
+    THREAD_ACTIONS,
     UnreadConversationSchema,
     UnreadThreadSchema,
     UserSchema,
@@ -578,6 +579,7 @@ export const ReplyOutputSchema = z.object({
     recipients: z.array(z.number()).optional(),
     notifyAudience: z.enum(NOTIFY_AUDIENCES).optional(),
     groups: z.array(z.string()).optional(),
+    threadAction: z.enum(THREAD_ACTIONS).optional(),
 })
 
 /**
