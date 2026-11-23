@@ -470,10 +470,9 @@ describe(`${REPLY} tool`, () => {
     })
 
     describe('error handling', () => {
-        it('should suggest reopening when the thread is closed', async () => {
-            mockCommsApi.comments.createComment.mockRejectedValue(
-                new CommsRequestError('Request failed with status 400', 400),
-            )
+        it('should suggest reopening when the thread is closed, leaving it to the user', async () => {
+            const apiError = new CommsRequestError('Request failed with status 403', 403)
+            mockCommsApi.comments.createComment.mockRejectedValue(apiError)
             mockCommsApi.threads.getThread.mockResolvedValue(createMockThread({ closed: true }))
 
             await expect(
@@ -485,32 +484,81 @@ describe(`${REPLY} tool`, () => {
                     },
                     mockCommsApi,
                 ),
-            ).rejects.toThrow(
-                `Thread ${TEST_IDS.THREAD_1} is closed, so it does not accept new comments. To post this reply, send it again with threadAction: "reopen", which reopens the thread and posts the comment in one step.`,
-            )
+            ).rejects.toMatchObject({
+                message: `Thread ${TEST_IDS.THREAD_1} is closed, so it does not accept new comments and the reply was not posted. Posting it means reopening the thread for everyone: only if the user wants that, send it again with threadAction: "reopen", which reopens the thread and posts the comment in one step.`,
+                cause: apiError,
+            })
 
             expect(mockCommsApi.threads.getThread).toHaveBeenCalledWith(TEST_IDS.THREAD_1)
         })
 
-        it('should keep the API error when the refused thread is open', async () => {
-            const apiError = new CommsRequestError('Request failed with status 403', 403)
-            mockCommsApi.comments.createComment.mockRejectedValue(apiError)
-            mockCommsApi.threads.getThread.mockResolvedValue(createMockThread({ closed: false }))
+        it.each([
+            {
+                threadAction: 'close',
+                closed: true,
+                message: `Thread ${TEST_IDS.THREAD_1} is already closed, so the reply was not posted.`,
+            },
+            {
+                threadAction: 'reopen',
+                closed: false,
+                message: `Thread ${TEST_IDS.THREAD_1} is already open, so the reply was not posted. To post it, send it again without threadAction.`,
+            },
+        ] as const)(
+            'should explain a refused $threadAction when the thread is already in that state',
+            async ({ threadAction, closed, message }) => {
+                const apiError = new CommsRequestError('Request failed with status 403', 403)
+                mockCommsApi.threads.closeThread.mockRejectedValue(apiError)
+                mockCommsApi.threads.reopenThread.mockRejectedValue(apiError)
+                mockCommsApi.threads.getThread.mockResolvedValue(createMockThread({ closed }))
 
-            await expect(
-                reply.execute(
-                    {
-                        targetType: 'thread',
-                        targetId: TEST_IDS.THREAD_1,
-                        content: 'Reply content',
-                    },
-                    mockCommsApi,
-                ),
-            ).rejects.toBe(apiError)
-        })
+                await expect(
+                    reply.execute(
+                        {
+                            targetType: 'thread',
+                            targetId: TEST_IDS.THREAD_1,
+                            content: 'Reply content',
+                            threadAction,
+                        },
+                        mockCommsApi,
+                    ),
+                ).rejects.toMatchObject({ message, cause: apiError })
+
+                expect(mockCommsApi.threads.getThread).toHaveBeenCalledWith(TEST_IDS.THREAD_1)
+            },
+        )
+
+        it.each([
+            { threadAction: undefined, closed: false },
+            { threadAction: 'close', closed: false },
+            { threadAction: 'reopen', closed: true },
+            { threadAction: 'reopen', closed: null },
+        ] as const)(
+            'should keep the API error for a refused reply with threadAction $threadAction when closed is $closed',
+            async ({ threadAction, closed }) => {
+                const apiError = new CommsRequestError('Request failed with status 403', 403)
+                mockCommsApi.comments.createComment.mockRejectedValue(apiError)
+                mockCommsApi.threads.closeThread.mockRejectedValue(apiError)
+                mockCommsApi.threads.reopenThread.mockRejectedValue(apiError)
+                mockCommsApi.threads.getThread.mockResolvedValue(createMockThread({ closed }))
+
+                await expect(
+                    reply.execute(
+                        {
+                            targetType: 'thread',
+                            targetId: TEST_IDS.THREAD_1,
+                            content: 'Reply content',
+                            threadAction,
+                        },
+                        mockCommsApi,
+                    ),
+                ).rejects.toBe(apiError)
+
+                expect(mockCommsApi.threads.getThread).toHaveBeenCalledWith(TEST_IDS.THREAD_1)
+            },
+        )
 
         it('should keep the API error when the thread state cannot be read', async () => {
-            const apiError = new CommsRequestError('Request failed with status 400', 400)
+            const apiError = new CommsRequestError('Request failed with status 403', 403)
             mockCommsApi.comments.createComment.mockRejectedValue(apiError)
             mockCommsApi.threads.getThread.mockRejectedValue(new Error('Network down'))
 
@@ -524,25 +572,33 @@ describe(`${REPLY} tool`, () => {
                     mockCommsApi,
                 ),
             ).rejects.toBe(apiError)
+
+            expect(mockCommsApi.threads.getThread).toHaveBeenCalledWith(TEST_IDS.THREAD_1)
         })
 
-        it('should not look up the thread after a server error', async () => {
-            const apiError = new CommsRequestError('Request failed with status 503', 503)
-            mockCommsApi.comments.createComment.mockRejectedValue(apiError)
+        it.each([400, 404, 429, 503])(
+            'should not look up the thread after a %i',
+            async (status) => {
+                const apiError = new CommsRequestError(
+                    `Request failed with status ${status}`,
+                    status,
+                )
+                mockCommsApi.comments.createComment.mockRejectedValue(apiError)
 
-            await expect(
-                reply.execute(
-                    {
-                        targetType: 'thread',
-                        targetId: TEST_IDS.THREAD_1,
-                        content: 'Reply content',
-                    },
-                    mockCommsApi,
-                ),
-            ).rejects.toBe(apiError)
+                await expect(
+                    reply.execute(
+                        {
+                            targetType: 'thread',
+                            targetId: TEST_IDS.THREAD_1,
+                            content: 'Reply content',
+                        },
+                        mockCommsApi,
+                    ),
+                ).rejects.toBe(apiError)
 
-            expect(mockCommsApi.threads.getThread).not.toHaveBeenCalled()
-        })
+                expect(mockCommsApi.threads.getThread).not.toHaveBeenCalled()
+            },
+        )
 
         it('should propagate thread reply errors', async () => {
             const apiError = new Error('Thread not found')

@@ -51,37 +51,67 @@ const ArgsSchema = {
 }
 
 /**
- * The SDK call behind each thread action and the state the reply reports.
- * Keyed by the SDK's ThreadAction, so an action the SDK adds fails to compile
- * here instead of being posted as a plain comment.
+ * The SDK call behind each thread action, the state the reply reports, and
+ * whether the action leaves the thread closed. Keyed by the SDK's
+ * ThreadAction, so an action the SDK adds fails to compile here instead of
+ * being posted as a plain comment.
  */
 const THREAD_ACTION_STEPS = {
-    close: { method: 'closeThread', result: 'Closed' },
-    reopen: { method: 'reopenThread', result: 'Reopened' },
-} as const satisfies Record<ThreadAction, { method: keyof CommsApi['threads']; result: string }>
+    close: { method: 'closeThread', result: 'Closed', leavesThreadClosed: true },
+    reopen: { method: 'reopenThread', result: 'Reopened', leavesThreadClosed: false },
+} as const satisfies Record<
+    ThreadAction,
+    { method: keyof CommsApi['threads']; result: string; leavesThreadClosed: boolean }
+>
 
 /**
- * A closed thread refuses new comments. The API documents no error code for
- * that, so when Comms refuses a comment (a 4xx) this reads the thread: if it
- * is closed, the error says how to post anyway. Any other case, including a
- * failed lookup, keeps the original error.
+ * Why Comms refused a thread reply, given whether the thread is closed:
+ * a comment on a closed thread, or an action on a thread already in the state
+ * the action leaves it in. Undefined when the thread's state does not explain
+ * the refusal.
  */
-async function explainRefusedComment(
+function describeRefusal(
+    threadId: string,
+    threadAction: ThreadAction | undefined,
+    isClosed: boolean,
+): string | undefined {
+    if (threadAction === undefined) {
+        return isClosed
+            ? `Thread ${threadId} is closed, so it does not accept new comments and the reply was not posted. Posting it means reopening the thread for everyone: only if the user wants that, send it again with threadAction: "reopen", which reopens the thread and posts the comment in one step.`
+            : undefined
+    }
+    if (THREAD_ACTION_STEPS[threadAction].leavesThreadClosed !== isClosed) {
+        return undefined
+    }
+    return isClosed
+        ? `Thread ${threadId} is already closed, so the reply was not posted.`
+        : `Thread ${threadId} is already open, so the reply was not posted. To post it, send it again without threadAction.`
+}
+
+/**
+ * Comms refuses a comment on a closed thread, closing a closed thread and
+ * reopening an open one with a 403 and its generic forbidden error code, the
+ * same answer it gives when the channel limits who can comment. So on a 403
+ * this reads the thread to say which it was. Any other error, a refusal the
+ * thread's state does not explain, or a failed lookup keeps the original error.
+ */
+async function explainRefusedReply(
     client: CommsApi,
     threadId: string,
+    threadAction: ThreadAction | undefined,
     error: unknown,
 ): Promise<unknown> {
-    const status = error instanceof CommsRequestError ? error.httpStatusCode : undefined
-    if (status === undefined || status < 400 || status >= 500) {
+    if (!(error instanceof CommsRequestError) || error.httpStatusCode !== 403) {
         return error
     }
     const thread = await client.threads.getThread(threadId).catch(() => undefined)
-    if (!thread?.closed) {
-        return error
-    }
-    return new Error(
-        `Thread ${threadId} is closed, so it does not accept new comments. To post this reply, send it again with threadAction: "reopen", which reopens the thread and posts the comment in one step.`,
-    )
+    const isClosed = thread?.closed
+    const message =
+        typeof isClosed === 'boolean'
+            ? describeRefusal(threadId, threadAction, isClosed)
+            : undefined
+    // Assigned rather than passed to the constructor: the es2021 lib has no `cause` option.
+    return message ? Object.assign(new Error(message), { cause: error }) : error
 }
 
 const reply = {
@@ -126,16 +156,16 @@ const reply = {
                 groups: groupsToNotify,
                 notifyAudience: appliedAudience,
             }
-            const comment = threadAction
-                ? await client.threads[THREAD_ACTION_STEPS[threadAction].method]({
-                      id: targetId,
-                      ...notification,
-                  })
-                : await client.comments
-                      .createComment({ threadId: targetId, ...notification })
-                      .catch(async (error: unknown) => {
-                          throw await explainRefusedComment(client, targetId, error)
+            const comment = await (
+                threadAction
+                    ? client.threads[THREAD_ACTION_STEPS[threadAction].method]({
+                          id: targetId,
+                          ...notification,
                       })
+                    : client.comments.createComment({ threadId: targetId, ...notification })
+            ).catch(async (error: unknown) => {
+                throw await explainRefusedReply(client, targetId, threadAction, error)
+            })
             replyId = comment.id
             replyUrl =
                 comment.url ??
