@@ -5,6 +5,7 @@ import {
     NOTIFY_AUDIENCES,
     type NotifyAudience,
     THREAD_ACTIONS,
+    type ThreadAction,
 } from '@todoist/comms-sdk'
 import { z } from 'zod'
 import type { CommsTool } from '../comms-tool.js'
@@ -49,7 +50,15 @@ const ArgsSchema = {
         ),
 }
 
-const THREAD_ACTION_RESULTS = { close: 'Closed', reopen: 'Reopened' } as const
+/**
+ * The SDK call behind each thread action and the state the reply reports.
+ * Keyed by the SDK's ThreadAction, so an action the SDK adds fails to compile
+ * here instead of being posted as a plain comment.
+ */
+const THREAD_ACTION_STEPS = {
+    close: { method: 'closeThread', result: 'Closed' },
+    reopen: { method: 'reopenThread', result: 'Reopened' },
+} as const satisfies Record<ThreadAction, { method: keyof CommsApi['threads']; result: string }>
 
 /**
  * A closed thread refuses new comments. The API documents no error code for
@@ -117,16 +126,16 @@ const reply = {
                 groups: groupsToNotify,
                 notifyAudience: appliedAudience,
             }
-            const comment =
-                threadAction === 'close'
-                    ? await client.threads.closeThread({ id: targetId, ...notification })
-                    : threadAction === 'reopen'
-                      ? await client.threads.reopenThread({ id: targetId, ...notification })
-                      : await client.comments
-                            .createComment({ threadId: targetId, ...notification })
-                            .catch(async (error: unknown) => {
-                                throw await explainRefusedComment(client, targetId, error)
-                            })
+            const comment = threadAction
+                ? await client.threads[THREAD_ACTION_STEPS[threadAction].method]({
+                      id: targetId,
+                      ...notification,
+                  })
+                : await client.comments
+                      .createComment({ threadId: targetId, ...notification })
+                      .catch(async (error: unknown) => {
+                          throw await explainRefusedComment(client, targetId, error)
+                      })
             replyId = comment.id
             replyUrl =
                 comment.url ??
@@ -169,7 +178,9 @@ const reply = {
             `**Target:** ${targetType === 'thread' ? `Thread ${targetId}` : `Conversation ${targetId}`}`,
             `**Reply ID:** ${replyId}`,
             `**Created:** ${created.toISOString()}`,
-            ...(threadAction ? [`**Thread state:** ${THREAD_ACTION_RESULTS[threadAction]}`] : []),
+            ...(threadAction
+                ? [`**Thread state:** ${THREAD_ACTION_STEPS[threadAction].result}`]
+                : []),
             '',
             '## Content',
             '',
